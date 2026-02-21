@@ -1,9 +1,25 @@
+"""
+Bronze layer — raw tables.
+
+Data is loaded here directly from CSV files with no transformation.
+All columns are stored as Text regardless of their actual type.
+This layer is append-only and serves as a full audit trail.
+If anything breaks in the transform step, this data is always safe to reprocess.
+"""
+
+
 from sqlalchemy import Column, Integer, Text, DateTime
 from sqlalchemy.sql import func
 from db.base import Base
 
 
 class RawEmployee(Base):
+    """
+    Raw employee data loaded directly from the employee CSV.
+    Column names match CSV headers exactly.
+    source_file tracks which file this row came from.
+    """
+
     __tablename__ = "raw_employee"
     __table_args__ = {"schema": "bronze"}
 
@@ -47,6 +63,12 @@ class RawEmployee(Base):
 
 
 class RawTimesheet(Base):
+    """
+    Raw timesheet data loaded from all three timesheet CSV files.
+    All three files share the same structure and load into this single table.
+    source_file distinguishes which file each row came from.
+    """
+    
     __tablename__ = "raw_timesheet"
     __table_args__ = { "schema": "bronze" }
 

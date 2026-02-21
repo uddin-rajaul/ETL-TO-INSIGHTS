@@ -1,3 +1,14 @@
+"""
+Silver layer — cleaned and normalized tables.
+
+Data here has been type-cast, deduplicated, trimmed, and validated.
+Organization and Department are split into their own lookup tables.
+The four is_ boolean columns on Timesheet are computed during transform
+using the grace_time_minutes setting from config/settings.yaml.
+This is the layer the API and SQL analytics queries run against.
+"""
+
+
 from sqlalchemy import (
     Column,
     Integer,
@@ -18,6 +29,11 @@ from sqlalchemy.sql import func
 
 
 class Organization(Base):
+    """
+    Unique organizations extracted from employee data.
+    Example: 'Lowell General Hospital', 'Care at Home'.
+    """
+
     __tablename__ = "organization"
     __table_args__ = {"schema": "silver"}
 
@@ -30,6 +46,13 @@ class Organization(Base):
 
 
 class Department(Base):
+    """
+    Unique departments extracted from employee data.
+    Belongs to an organization via organization_id FK.
+    The combination of code + organization_id must be unique
+    because the same department code can exist across organizations.
+    """
+
     __tablename__ = "department"
     __table_args__ = (
         UniqueConstraint("code", "organization_id", name="uq_dept_code_org"),
@@ -46,6 +69,14 @@ class Department(Base):
 
 
 class Employee(Base):
+    """
+    Cleaned employee master records.
+    manager_employee_id is a self-referencing FK — points to another
+    employee row, allowing org hierarchy queries.
+    Employees are never hard deleted — active_status and term_date
+    track employment lifecycle.
+    """
+
     __tablename__ = "employee"
     __table_args__ = (
         Index("ix_employee_dept", "department_id"),
@@ -98,6 +129,13 @@ class Employee(Base):
 
 
 class Timesheet(Base):
+    """
+    Cleaned punch-in/punch-out records. One row = one shift.
+    scheduled_start/end are nullable for unscheduled shifts.
+    The four is_ boolean flags are computed in the transform step
+    and stored here so KPI queries avoid recalculating them every time.
+    """
+    
     __tablename__ = "timesheet"
     __table_args__ = (
         Index("ix_timesheet_employee", "client_employee_id"),
