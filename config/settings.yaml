@@ -1,0 +1,16 @@
+etl:
+  batch_size: 1000
+  date_format: "%Y-%m-%d"
+  datetime_format: "%Y-%m-%d %H:%M:%S"
+  grace_time_minutes: 5
+  early_attribution_months: 6
+
+database:
+  pool_size: 5
+  max_overflow: 10
+  echo: false
+
+logging:
+  level: INFO
+  file: logs/etl.log
+
