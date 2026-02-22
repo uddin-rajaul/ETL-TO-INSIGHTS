@@ -29,3 +29,14 @@ SessionLocal = sessionmaker(bind=engine, autocommit = False, autoflush= False)
 class Base(DeclarativeBase):
     pass
 
+def get_db():
+    """
+    FastAPI dependency that provides a database session per request.
+    Automatically closes the session when the request is done.
+    Usage in routes: db: Session = Depends(get_db)
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
