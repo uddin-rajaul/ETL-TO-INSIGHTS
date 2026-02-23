@@ -89,3 +89,21 @@ class RawTimesheet(Base):
     scheduled_end_datetime = Column(Text)
     loaded_at = Column(DateTime, server_default=func.now())
     source_file = Column(Text)
+
+
+class RejectedTimesheet(Base):
+    """
+    Dead letter table for timesheet rows that failed validation.
+    Rows land here instead of being silently dropped.
+    reason column explains why the row was rejected.
+    """
+    __tablename__ = "rejected_timesheet"
+    __table_args__ = {"schema": "bronze"}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_employee_id = Column(Text)
+    punch_apply_date = Column(Text)
+    hours_worked = Column(Text)
+    source_file = Column(Text)
+    reason = Column(Text, nullable=False)
+    rejected_at = Column(DateTime, server_default=func.now())
