@@ -8,6 +8,7 @@ from db.base import SessionLocal
 from db.models_bronze import RawEmployee, RawTimesheet
 from etl.extract.extractor import Extractor
 
+import sqlalchemy as sa
 
 @pytest.fixture
 def session():
@@ -16,7 +17,6 @@ def session():
     Clears bronze tables before each test to ensure a clean state.
     """
     db = SessionLocal()
-    import sqlalchemy as sa
     db.execute(sa.text("TRUNCATE TABLE bronze.raw_employee RESTART IDENTITY"))
     db.execute(sa.text("TRUNCATE TABLE bronze.raw_timesheet RESTART IDENTITY"))
     db.commit()
