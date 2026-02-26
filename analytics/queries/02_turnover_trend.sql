@@ -18,11 +18,10 @@ WITH monthly_terminations AS (
         EXTRACT(MONTH FROM term_date)
 ),
 
-monthly_headcount AS (
-    -- average headcount per month using hire and term dates
+daily_headcount AS (
+    -- daily active headcount snapshots
     SELECT
-        EXTRACT(YEAR  FROM d)::int AS year,
-        EXTRACT(MONTH FROM d)::int AS month,
+        d.snapshot_date::date AS snapshot_date,
         COUNT(e.id) AS active_count
     FROM generate_series(
         (SELECT MIN(hire_date) FROM silver.employee),
@@ -32,18 +31,28 @@ monthly_headcount AS (
     LEFT JOIN silver.employee e
         ON e.hire_date <= d.snapshot_date::date
         AND (e.term_date IS NULL OR e.term_date > d.snapshot_date::date)
+    GROUP BY d.snapshot_date
+),
+
+monthly_headcount AS (
+    -- true monthly average of daily active headcount
+    SELECT
+        EXTRACT(YEAR FROM snapshot_date)::int AS year,
+        EXTRACT(MONTH FROM snapshot_date)::int AS month,
+        ROUND(AVG(active_count)::numeric, 2) AS avg_headcount
+    FROM daily_headcount
     GROUP BY
-        EXTRACT(YEAR  FROM d),
-        EXTRACT(MONTH FROM d)
+        EXTRACT(YEAR FROM snapshot_date),
+        EXTRACT(MONTH FROM snapshot_date)
 )
 
 SELECT
     t.year,
     t.month,
     t.terminations,
-    h.active_count AS avg_headcount,
+    h.avg_headcount,
     ROUND(t.terminations::numeric / 
-          NULLIF(h.active_count, 0) * 100, 2) AS turnover_rate_pct
+          NULLIF(h.avg_headcount, 0) * 100, 2) AS turnover_rate_pct
 FROM monthly_terminations t
 JOIN monthly_headcount h
     ON t.year  = h.year
