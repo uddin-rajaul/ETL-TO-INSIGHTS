@@ -6,7 +6,7 @@ Then loads it into the silver layer tables.
 import re
 import yaml
 import pandas as pd
-from datetime import date
+from datetime import date, datetime
 from loguru import logger
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -54,6 +54,19 @@ class Transformer:
             return parsed.date()
         except Exception:
             logger.warning(f"Could not parse date: {value}")
+            return None
+
+    def _parse_datetime(self, value) -> datetime | None:
+        """Convert a datetime string to a Python datetime object."""
+        if value is None:
+            return None
+        try:
+            parsed = pd.to_datetime(str(value).strip())
+            if pd.isna(parsed):
+                return None
+            return parsed.to_pydatetime()
+        except Exception:
+            logger.warning(f"Could not parse datetime: {value}")
             return None
     
     def _parse_float(self, value) -> float | None:
@@ -310,10 +323,10 @@ class Transformer:
                     home_department_name = self._clean_string(raw.home_department_name),
                     pay_code = self._clean_string(raw.pay_code),
                     punch_apply_date = self._parse_date(raw.punch_apply_date),
-                    punch_in_datetime = self._parse_date(raw.punch_in_datetime),
-                    punch_out_datetime = self._parse_date(raw.punch_out_datetime),
-                    scheduled_start_datetime = self._parse_date(raw.scheduled_start_datetime),
-                    scheduled_end_datetime = self._parse_date(raw.scheduled_end_datetime),
+                    punch_in_datetime = self._parse_datetime(raw.punch_in_datetime),
+                    punch_out_datetime = self._parse_datetime(raw.punch_out_datetime),
+                    scheduled_start_datetime = self._parse_datetime(raw.scheduled_start_datetime),
+                    scheduled_end_datetime = self._parse_datetime(raw.scheduled_end_datetime),
                     hours_worked = self._parse_float(raw.hours_worked),
                     punch_in_comment = self._clean_string(raw.punch_in_comment),
                     punch_out_comment = self._clean_string(raw.punch_out_comment),

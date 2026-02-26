@@ -9,6 +9,7 @@ Monitor at: http://localhost:4300
 from prefect import flow, task, get_run_logger
 from db.base import SessionLocal
 from etl.extract.extractor import Extractor
+from etl.postprocess.postprocessor import PostProcessor
 from etl.transform.transformer import Transformer
 
 @task(name="Extract", retries = 2, retry_delay_seconds=30)
@@ -54,11 +55,31 @@ def transform_task():
         session.close()
 
 
+@task(name="Post-Process", retries=1, retry_delay_seconds=60)
+def postprocess_task():
+    """
+    Post-processing step — computes KPI aggregates from silver
+    and populates gold tables.
+    """
+    logger = get_run_logger()
+    session = SessionLocal()
+    try:
+        postprocessor = PostProcessor(session)
+        result = postprocessor.run()
+        logger.info(f"Post-processing complete: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"Post-processing failed: {e}")
+        raise
+    finally:
+        session.close()
+
+
 @flow(name="ETL Pipeline")
 def etl_pipeline():
     """
-    Main ETL flow - runs extract and transform in order.
-    Prefect ensures that transform only runs after extract succeeds.
+    Main ETL flow - runs extract, transform, and post-process in order.
+    Prefect ensures each stage starts only when the previous stage succeeds.
     """
 
     logger = get_run_logger()
@@ -66,12 +87,19 @@ def etl_pipeline():
 
     extract_result = extract_task()
     transform_result = transform_task(wait_for=[extract_result])
+    postprocess_result = postprocess_task(wait_for=[transform_result])
 
-    logger.info(f"Pipeline complete. Extract: {extract_result}, Transform: {transform_result}")
+    logger.info(
+        "Pipeline complete. "
+        f"Extract: {extract_result}, "
+        f"Transform: {transform_result}, "
+        f"Post-Process: {postprocess_result}"
+    )
 
     return {
         "extract": extract_result,
         "transform": transform_result,
+        "postprocess": postprocess_result,
     }
 
 if __name__ == "__main__":

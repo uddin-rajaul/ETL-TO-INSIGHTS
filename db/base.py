@@ -40,3 +40,10 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def get_settings() -> dict:
+    """Load and return settings from config/settings.yaml."""
+    import yaml
+    with open("config/settings.yaml", "r") as f:
+        return yaml.safe_load(f)

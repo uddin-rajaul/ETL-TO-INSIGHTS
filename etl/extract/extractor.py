@@ -4,11 +4,14 @@ Extract step - reads CSV files from local disk or MinIO and loads raw data into 
 
 import os
 import glob
+import io
 import pandas as pd
 from loguru import logger
 from pathlib import Path
 import sqlalchemy
 from sqlalchemy.orm import Session
+from minio import Minio
+from minio.error import S3Error
 
 
 import yaml
@@ -29,9 +32,60 @@ class Extractor:
     def __init__(self, session: Session):
         self.session = session
         self.config = load_config()
-        self.data_source = os.getenv("DATA_SOURCE", "local")
+        self.data_source = os.getenv("DATA_SOURCE", "local").strip().lower()
         self.raw_data_path = os.getenv("RAW_DATA_PATH", "data/raw")
-    
+        self.minio_client: Minio | None = None
+        self.minio_bucket = os.getenv("MINIO_BUCKET", "").strip()
+
+        if self.data_source == "minio":
+            self.minio_client = self._create_minio_client()
+        elif self.data_source != "local":
+            raise ValueError(
+                f"Unsupported DATA_SOURCE '{self.data_source}'. Use 'local' or 'minio'."
+            )
+
+    def _parse_bool_env(self, value: str | None, default: bool = False) -> bool:
+        if value is None:
+            return default
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _create_minio_client(self) -> Minio:
+        """
+        Build MinIO client from environment variables.
+        Required vars for DATA_SOURCE=minio:
+          - MINIO_ENDPOINT
+          - MINIO_ACCESS_KEY
+          - MINIO_SECRET_KEY
+          - MINIO_BUCKET
+        """
+        endpoint = os.getenv("MINIO_ENDPOINT", "").strip()
+        access_key = os.getenv("MINIO_ACCESS_KEY", "").strip()
+        secret_key = os.getenv("MINIO_SECRET_KEY", "").strip()
+        secure = self._parse_bool_env(os.getenv("MINIO_SECURE"), default=False)
+
+        missing = []
+        if not endpoint:
+            missing.append("MINIO_ENDPOINT")
+        if not access_key:
+            missing.append("MINIO_ACCESS_KEY")
+        if not secret_key:
+            missing.append("MINIO_SECRET_KEY")
+        if not self.minio_bucket:
+            missing.append("MINIO_BUCKET")
+
+        if missing:
+            raise ValueError(
+                "Missing required MinIO environment variables: "
+                + ", ".join(missing)
+            )
+
+        client = Minio(
+            endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            secure=secure,
+        )
+        return client
 
     def _get_local_files(self, pattern: str) -> list[str]:
         """
@@ -46,8 +100,52 @@ class Extractor:
         else:
             logger.info(f"Found {len(files)} files for pattern '{pattern}'")
         return files
+
+    def _get_minio_files(self, pattern: str) -> list[str]:
+        """
+        List CSV objects in MinIO bucket under RAW_DATA_PATH prefix.
+        Example: pattern='timesheet' finds objects like timesheet_*.csv.
+        """
+        if self.minio_client is None:
+            raise RuntimeError("MinIO client is not initialized.")
+
+        prefix = self.raw_data_path.strip("/")
+        if prefix:
+            prefix = f"{prefix}/"
+
+        try:
+            objects = self.minio_client.list_objects(
+                self.minio_bucket,
+                prefix=prefix,
+                recursive=True,
+            )
+            files = [
+                obj.object_name
+                for obj in objects
+                if obj.object_name.lower().endswith(".csv")
+                and pattern.lower() in Path(obj.object_name).name.lower()
+            ]
+            files.sort()
+        except S3Error as e:
+            logger.error(f"Failed to list MinIO objects: {e}")
+            raise
+
+        if not files:
+            logger.warning(
+                f"No MinIO objects found in bucket '{self.minio_bucket}' "
+                f"with prefix '{prefix}' and pattern '{pattern}'."
+            )
+        else:
+            logger.info(f"Found {len(files)} MinIO files for pattern '{pattern}'")
+        return files
+
+    def _get_files(self, pattern: str) -> list[str]:
+        """Get source files from selected data source."""
+        if self.data_source == "local":
+            return self._get_local_files(pattern)
+        return self._get_minio_files(pattern)
     
-    def _read_csv(self, filepath: str) -> pd.DataFrame:
+    def _read_csv_local(self, filepath: str) -> pd.DataFrame:
         """
         Read a pipe-delimited CSV file into a dataframe.
         Replaces [NULL] strings with actual NaN values (missing values).
@@ -65,6 +163,39 @@ class Extractor:
         df.columns = df.columns.str.strip().str.lower()
         logger.info(f"Loaded {len(df)} rows from {Path(filepath).name}")
         return df
+
+    def _read_csv_minio(self, object_name: str) -> pd.DataFrame:
+        """
+        Read a pipe-delimited CSV object from MinIO into a dataframe.
+        """
+        if self.minio_client is None:
+            raise RuntimeError("MinIO client is not initialized.")
+
+        logger.info(f"Reading MinIO object: {self.minio_bucket}/{object_name}")
+
+        response = self.minio_client.get_object(self.minio_bucket, object_name)
+        try:
+            payload = response.read()
+        finally:
+            response.close()
+            response.release_conn()
+
+        df = pd.read_csv(
+            io.BytesIO(payload),
+            delimiter="|",
+            dtype=str,
+            na_values=["[NULL]", "NULL", ""],
+            keep_default_na=True,
+        )
+        df.columns = df.columns.str.strip().str.lower()
+        logger.info(f"Loaded {len(df)} rows from {Path(object_name).name}")
+        return df
+
+    def _read_csv(self, file_ref: str) -> pd.DataFrame:
+        """Read CSV from configured source."""
+        if self.data_source == "local":
+            return self._read_csv_local(file_ref)
+        return self._read_csv_minio(file_ref)
     
 
     def extract_employees(self) -> int:
@@ -73,16 +204,16 @@ class Extractor:
         Returns the number of rows inserted.
         """
 
-        files = self._get_local_files("employee")
+        files = self._get_files("employee")
         if not files:
             logger.error("No employee file found. Aborting.")
             return 0
         
         total_inserted = 0
 
-        for filepath in files:
-            df = self._read_csv(filepath)
-            filename = Path(filepath).name
+        for file_ref in files:
+            df = self._read_csv(file_ref)
+            filename = Path(file_ref).name
 
             rows = []
             for _, row in df.iterrows():
@@ -139,7 +270,7 @@ class Extractor:
         Returns the number of rows inserted.
         """
 
-        files = self._get_local_files("timesheet")
+        files = self._get_files("timesheet")
         if not files:
             logger.error("No timesheet files found. Aborting.")
             return 0
@@ -148,9 +279,9 @@ class Extractor:
         config = self.config["etl"]
         batch_size = config["batch_size"]
 
-        for filepath in files:
-            df = self._read_csv(filepath)
-            filename = Path(filepath).name 
+        for file_ref in files:
+            df = self._read_csv(file_ref)
+            filename = Path(file_ref).name 
             rows = []
 
             for _, row in df.iterrows():
