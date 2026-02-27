@@ -126,4 +126,4 @@ def etl_pipeline():
     }
 
 if __name__ == "__main__":
-    etl_pipeline()
+    etl_pipeline.serve("daily_etl_pipeline", cron = "0 2 * * *")  # Schedule to run daily at 2 AM
