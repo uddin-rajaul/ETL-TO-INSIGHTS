@@ -1,0 +1,60 @@
+{
+    "run_at": "2026-02-27T14:33:15.956882",
+    "checks": [
+        {
+            "check": "null_check_employee_client_employee_id",
+            "status": "PASS",
+            "details": "0 null values found in silver.employee.client_employee_id"
+        },
+        {
+            "check": "null_check_employee_hire_date",
+            "status": "PASS",
+            "details": "0 null values found in silver.employee.hire_date"
+        },
+        {
+            "check": "null_check_employee_first_name",
+            "status": "PASS",
+            "details": "0 null values found in silver.employee.first_name"
+        },
+        {
+            "check": "null_check_timesheet_client_employee_id",
+            "status": "PASS",
+            "details": "0 null values found in silver.timesheet.client_employee_id"
+        },
+        {
+            "check": "null_check_timesheet_punch_apply_date",
+            "status": "PASS",
+            "details": "0 null values found in silver.timesheet.punch_apply_date"
+        },
+        {
+            "check": "null_check_timesheet_hours_worked",
+            "status": "PASS",
+            "details": "0 null values found in silver.timesheet.hours_worked"
+        },
+        {
+            "check": "duplicate_check_employee_id",
+            "status": "PASS",
+            "details": "0 duplicate employee IDs found in silver.employee"
+        },
+        {
+            "check": "date_logic_check_hire_date",
+            "status": "PASS",
+            "details": "0 records with hire_date in the future found in silver.employee"
+        },
+        {
+            "check": "hours_worked_check",
+            "status": "PASS",
+            "details": "0 records with invalid hours_worked found in silver.timesheet"
+        },
+        {
+            "check": "orphan_rate_check",
+            "status": "PASS",
+            "details": "412136 of 412571 rows rejected (99.89% orphan rate)"
+        },
+        {
+            "check": "attendance_flag_check",
+            "status": "PASS",
+            "details": "2 records with both is_late_arrival and is_early_departure set to True found in silver.timesheet"
+        }
+    ]
+}
