@@ -330,6 +330,7 @@ class Extractor:
         logger.info("Clearing bronze tables before extraction...")
         self.session.execute(sqlalchemy.text("TRUNCATE TABLE bronze.raw_timesheet RESTART IDENTITY"))
         self.session.execute(sqlalchemy.text("TRUNCATE TABLE bronze.raw_employee RESTART IDENTITY"))
+        self.session.execute(sqlalchemy.text("TRUNCATE TABLE bronze.rejected_timesheet RESTART IDENTITY"))
         self.session.commit()
         logger.info("Bronze tables cleared.")
 
