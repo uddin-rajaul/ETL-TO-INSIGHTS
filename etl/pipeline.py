@@ -11,6 +11,7 @@ from db.base import SessionLocal
 from etl.extract.extractor import Extractor
 from etl.postprocess.postprocessor import PostProcessor
 from etl.transform.transformer import Transformer
+from etl.quality.checker import QualityChecker
 
 @task(name="Extract", retries = 2, retry_delay_seconds=30)
 def extract_task():
@@ -54,6 +55,25 @@ def transform_task():
     finally:
         session.close()
 
+@task(name="Quality Check", retries=1, retry_delay_seconds=30)
+def quality_check_task():
+    """
+    Quality check step - validates silver layer data after transform.
+    Generates a quality report and logs findings.
+    Retries once if it fails — should be quick to run, so short delay.
+    """
+    logger = get_run_logger()
+    session = SessionLocal()
+    try:
+        checker = QualityChecker(session)
+        report = checker.run()
+        logger.info(f"Quality check complete: {report}")
+        return report
+    except Exception as e:
+        logger.error(f"Quality check failed: {e}")
+        raise
+    finally:
+        session.close()
 
 @task(name="Post-Process", retries=1, retry_delay_seconds=60)
 def postprocess_task():
@@ -87,18 +107,21 @@ def etl_pipeline():
 
     extract_result = extract_task()
     transform_result = transform_task(wait_for=[extract_result])
-    postprocess_result = postprocess_task(wait_for=[transform_result])
+    quality_result = quality_check_task(wait_for=[transform_result])
+    postprocess_result = postprocess_task(wait_for=[quality_result])
 
     logger.info(
         "Pipeline complete. "
         f"Extract: {extract_result}, "
         f"Transform: {transform_result}, "
+        f"Quality Check: {quality_result}, "
         f"Post-Process: {postprocess_result}"
     )
 
     return {
         "extract": extract_result,
         "transform": transform_result,
+        "quality_check": quality_result,
         "postprocess": postprocess_result,
     }
 
