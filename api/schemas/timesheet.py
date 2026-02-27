@@ -3,7 +3,7 @@ Pydantic schemas for Timesheet API.
 """
 from datetime import date, datetime
 from typing import Optional, List, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import math
 
 
@@ -35,8 +35,7 @@ class TimesheetResponse(TimesheetBase):
     id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TimesheetListResponse(BaseModel):
