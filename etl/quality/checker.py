@@ -4,11 +4,18 @@ Generates a quality report and logs findings.
 """
 import json
 import os
+import yaml
 from pathlib import Path
 from datetime import datetime
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+
+def load_config():
+    """Load settings from config/settings.yaml."""
+    with open("config/settings.yaml", "r") as f:
+        return yaml.safe_load(f)
 
 
 class QualityChecker:
@@ -19,6 +26,9 @@ class QualityChecker:
 
     def __init__(self, session: Session) -> None:
         self.session = session
+        self.config = load_config()
+        self.orphan_rate_max_pct = self.config["etl"]["orphan_rate_max_pct"]
+        self.attendance_flag_max_overlap = self.config["etl"]["attendance_flag_max_overlap"]
         self.report = {
             "run_at": datetime.now().isoformat(),
             "checks": []
@@ -126,8 +136,7 @@ class QualityChecker:
             return
 
         rate = round((rejected / total) * 100, 2)
-        # known data reality — only 29 of 10,773 timesheet employee IDs match the 50-employee master file
-        passed = rate < 99.9
+        passed = rate < self.orphan_rate_max_pct
 
         self._add_result(
             check_name="orphan_rate_check",
@@ -147,8 +156,7 @@ class QualityChecker:
 
         self._add_result(
             check_name="attendance_flag_check",
-            # allow small number of grace period boundary edge cases
-            passed=result <= 2,
+            passed=result <= self.attendance_flag_max_overlap,
             details=f"{result} records with both is_late_arrival and is_early_departure set to True found in silver.timesheet",
         )
 

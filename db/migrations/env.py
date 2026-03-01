@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.append(os.getcwd())
 
-from db.base import Base
+from db.base import Base, get_database_url
 from db.models_bronze import RawEmployee, RawTimesheet
 from db.models_silver import Organization, Department, Employee, Timesheet
 from db.models_gold import (
@@ -24,6 +24,9 @@ from db.models_auth import ApiUser
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+
+# Override alembic.ini URL with runtime DB env vars (important in Docker).
+config.set_main_option("sqlalchemy.url", get_database_url())
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

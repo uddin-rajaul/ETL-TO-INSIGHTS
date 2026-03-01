@@ -4,6 +4,8 @@ etl:
   datetime_format: "%Y-%m-%d %H:%M:%S"
   grace_time_minutes: 5
   early_attribution_months: 6
+  orphan_rate_max_pct: 99.9
+  attendance_flag_max_overlap: 2
 
 database:
   pool_size: 5
