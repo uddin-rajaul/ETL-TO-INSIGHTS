@@ -263,3 +263,143 @@ etl-to-insights/
 ├── tests/                           — 14 tests
 └── config/settings.yaml             — all configurable thresholds
 ```
+
+
+---
+
+## Engineering Decisions
+
+### Why PostgreSQL?
+
+The dataset is relational by nature — employees have departments, timesheets belong to employees, KPIs aggregate across both. PostgreSQL gives strong FK constraints, schema namespacing (bronze/silver/gold as actual schemas, not just table prefixes), and window functions needed for rolling averages and turnover calculations. It also has first-class support from SQLAlchemy and Alembic, which kept the ORM and migration tooling consistent.
+
+SQLite would have been simpler to set up but lacks the schema isolation and concurrency needed for a real pipeline. A columnar store like DuckDB would be fast for analytics queries but not appropriate for the transactional CRUD API sitting on the same database.
+
+### Why Medallion Architecture?
+
+A single-table approach would have worked for this dataset size, but it creates a brittle pipeline — if a transform bug is found, you have to re-ingest from source to fix it. The medallion pattern keeps each stage independently reprocessable: bronze is append-only and never touched after load, silver is rebuilt from bronze, gold is rebuilt from silver. A bug found in KPI logic means re-running post-process only, not re-reading 412,000 CSV rows.
+
+It also makes the 99.87% rejection rate visible rather than hidden. Without bronze, those 412,023 orphan rows simply disappear. With it, they're auditable.
+
+### Why Prefect?
+
+The pipeline has five stages with hard dependencies — quality checks must not run if transform fails, gold must not populate if quality checks fail. Prefect handles this with task dependency graphs and built-in retry logic, without requiring a separate server to run locally (unlike Airflow). The `--now` flag triggers an immediate run outside the cron schedule, which is useful for development and testing without changing the deployment config.
+
+### Why FastAPI?
+
+Automatic OpenAPI/Swagger documentation at `/docs` with zero extra configuration. Pydantic models enforce input validation and handle the NaN/NaT serialization issues that appeared in early API responses. Async support means the API doesn't block under concurrent requests. Flask would have required more boilerplate to achieve the same result.
+
+### Why store attendance flags in silver, not compute them in queries?
+
+Each timesheet row gets four boolean flags at transform time: `is_late_arrival`, `is_early_departure`, `is_overtime`, `is_unscheduled`. Computing these inline in every KPI query would mean running timestamp arithmetic against 400,000+ rows on every request. Pre-computing once at load time makes gold queries simple `COUNT(CASE WHEN is_late_arrival THEN 1 END)` aggregations — cheap and consistent.
+
+### Why Parquet for the warehouse export?
+
+Columnar format, compressed, and readable by Power BI, Spark, DuckDB, and most modern analytics tools without any transformation. It also separates the analytics warehouse from the operational database — a downstream team could consume the Parquet files directly without touching PostgreSQL.
+
+---
+
+## Schema Documentation
+
+### Entity Relationships
+
+![ER Diagram](docs/erd.png)
+### bronze schema
+
+**`bronze.raw_employee`** — raw CSV rows loaded as text, unchanged.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PK | |
+| client_employee_id | TEXT | |
+| first_name, last_name | TEXT | |
+| department, job_title, employment_type | TEXT | |
+| hire_date, termination_date | TEXT | raw string, not parsed |
+| manager_employee_id | TEXT | |
+| loaded_at | TIMESTAMP | pipeline run time |
+
+**`bronze.raw_timesheet`** — raw timesheet rows as text.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PK | |
+| client_employee_id | TEXT | |
+| punch_apply_date | TEXT | |
+| punch_in_time, punch_out_time | TEXT | |
+| scheduled_start, scheduled_end | TEXT | |
+| hours_worked | TEXT | |
+| loaded_at | TIMESTAMP | |
+
+**`bronze.rejected_timesheet`** — orphan rows that failed the employee FK join.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PK | |
+| _(all timesheet columns)_ | TEXT | same as raw_timesheet |
+| rejection_reason | TEXT | e.g. `MISSING_EMPLOYEE_RECORD` |
+| rejected_at | TIMESTAMP | |
+
+---
+
+### silver schema
+
+**`silver.employee`** — cleaned, typed employee master.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PK | |
+| client_employee_id | VARCHAR UNIQUE | business key |
+| first_name, last_name | VARCHAR | |
+| department, job_title | VARCHAR | |
+| employment_type | VARCHAR | |
+| hire_date | DATE | |
+| termination_date | DATE | nullable |
+| manager_employee_id | VARCHAR | FK → silver.employee.client_employee_id (nullable) |
+| is_active | BOOLEAN | derived: termination_date IS NULL |
+| created_at, updated_at | TIMESTAMP | |
+
+**`silver.timesheet`** — cleaned timesheet rows, matched employees only.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PK | |
+| client_employee_id | VARCHAR | FK → silver.employee.client_employee_id |
+| punch_apply_date | DATE | |
+| punch_in_time, punch_out_time | TIMESTAMP | |
+| scheduled_start, scheduled_end | TIMESTAMP | |
+| hours_worked | NUMERIC | |
+| is_late_arrival | BOOLEAN | punch_in > scheduled_start + grace |
+| is_early_departure | BOOLEAN | punch_out < scheduled_end - grace |
+| is_overtime | BOOLEAN | punch_out > scheduled_end + grace |
+| is_unscheduled | BOOLEAN | no scheduled_start/end |
+
+Indexes: `ix_timesheet_employee`, `ix_timesheet_date`, `ix_timesheet_employee_date` (composite), `ix_employee_dept`, `ix_employee_active`, `ix_employee_hire_date`.
+
+---
+
+### gold schema
+
+All gold tables are **truncated and rebuilt on every pipeline run** — no incremental logic, always a full refresh from silver.
+
+| Table | Grain | Key columns |
+|-------|-------|-------------|
+| `kpi_headcount` | One row per date | `date`, `active_count` |
+| `kpi_turnover` | One row per month | `year`, `month`, `terminations`, `avg_headcount`, `turnover_rate` |
+| `kpi_tenure_by_department` | One row per department | `department`, `avg_tenure_days` |
+| `kpi_attendance` | One row per employee | `client_employee_id`, `late_count`, `early_count`, `overtime_count` |
+| `kpi_rolling_hours` | One row per employee per date | `client_employee_id`, `date`, `rolling_avg_hours` |
+| `kpi_early_attrition` | One row per department | `department`, `total_hires`, `early_leavers`, `attrition_rate` |
+
+---
+
+### auth schema
+
+**`auth.user`** — API access only, no relationship to employee data.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | SERIAL PK | |
+| username | VARCHAR UNIQUE | |
+| hashed_password | VARCHAR | bcrypt |
+| role | VARCHAR | `admin` or `viewer` |
+| created_at | TIMESTAMP | |
